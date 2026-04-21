@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { qOne, exec, batchWrite } from '@/lib/db';
+import { toDateStr } from '@/lib/dateUtils';
 import * as XLSX from 'xlsx';
 
 export async function POST(req: NextRequest) {
@@ -10,8 +11,8 @@ export async function POST(req: NextRequest) {
     if (!file) return NextResponse.json({ error: '파일을 업로드해주세요' }, { status: 400 });
 
     const buffer = await file.arrayBuffer();
-    const wb = XLSX.read(buffer, { type: 'buffer' });
-    const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]) as Record<string, unknown>[];
+    const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+    const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { raw: true }) as Record<string, unknown>[];
     if (data.length === 0) return NextResponse.json({ error: '데이터가 없습니다' }, { status: 400 });
 
     let imported = 0;
@@ -78,7 +79,7 @@ export async function POST(req: NextRequest) {
           [product.id, txType, qty,
            String(row['경로'] || ''),
            '',
-           String(row['날짜'] || new Date().toISOString().split('T')[0]),
+           toDateStr(row['날짜']),
            '가져오기']
         );
         await exec(
@@ -110,8 +111,8 @@ export async function PUT(req: NextRequest) {
     const response = await fetch(csvUrl);
     if (!response.ok) throw new Error('URL에서 데이터를 가져올 수 없습니다');
     const text = await response.text();
-    const wb = XLSX.read(text, { type: 'string' });
-    const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]) as Record<string, unknown>[];
+    const wb = XLSX.read(text, { type: 'string', cellDates: true });
+    const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { raw: true }) as Record<string, unknown>[];
 
     let imported = 0;
     let skipped = 0;
@@ -177,7 +178,7 @@ export async function PUT(req: NextRequest) {
           [product.id, txType, qty,
            String(row['경로'] || ''),
            '',
-           String(row['날짜'] || new Date().toISOString().split('T')[0]),
+           toDateStr(row['날짜']),
            '가져오기']
         );
         await exec(

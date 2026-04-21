@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { qOne, exec, qAll } from '@/lib/db';
 import { batchWrite } from '@/lib/db';
 import type { GoogleSheetConnection } from '@/lib/types';
+import { toDateStr } from '@/lib/dateUtils';
 import * as XLSX from 'xlsx';
 
 type Params = { params: Promise<{ id: string }> };
@@ -35,8 +36,8 @@ export async function POST(_req: NextRequest, { params }: Params) {
     const response = await fetch(csvUrl);
     if (!response.ok) throw new Error('시트에서 데이터를 가져올 수 없습니다. 공유 설정을 확인하세요.');
     const text = await response.text();
-    const wb = XLSX.read(text, { type: 'string' });
-    const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]) as Record<string, unknown>[];
+    const wb = XLSX.read(text, { type: 'string', cellDates: true });
+    const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { raw: true }) as Record<string, unknown>[];
 
     let imported = 0;
     let skipped = 0;
@@ -102,7 +103,7 @@ export async function POST(_req: NextRequest, { params }: Params) {
           [product.id, txType, qty,
            String(row['경로'] || ''),
            '',
-           String(row['날짜'] || new Date().toISOString().split('T')[0]),
+           toDateStr(row['날짜']),
            '구글시트']
         );
         await exec(

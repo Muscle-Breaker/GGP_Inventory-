@@ -20,9 +20,17 @@ const TX_TYPES: { value: TransactionType; label: string; color: string }[] = [
   { value: 'OTHER_OUT', label: '기타출고', color: 'bg-gray-50 border-gray-200 text-gray-700' },
 ];
 
-function fmtDate(raw: string | undefined | null): string {
-  if (!raw) return '-';
-  return String(raw).slice(0, 10); // YYYY-MM-DD
+function fmtDate(raw: string | number | undefined | null): string {
+  if (raw === null || raw === undefined || raw === '') return '-';
+  const s = String(raw).trim();
+  // YYYY-MM-DD or YYYY-MM-DDTHH:mm...
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  // Excel 시리얼 숫자 (40000~100000 범위 = 2009~2173년)
+  const n = Number(s);
+  if (!isNaN(n) && n > 40000 && n < 100000) {
+    return new Date((n - 25569) * 86400 * 1000).toISOString().split('T')[0];
+  }
+  return s;
 }
 
 export default function TransactionsPage() {

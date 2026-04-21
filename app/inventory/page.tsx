@@ -52,6 +52,7 @@ export default function InventoryPage() {
 
       {/* Import/Export */}
       <ImportExportPanel
+        scope="inventory"
         importType="inventory"
         exportType="products"
         exportLabel="재고 현황"

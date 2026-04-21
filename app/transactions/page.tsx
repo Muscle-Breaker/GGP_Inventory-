@@ -105,6 +105,7 @@ export default function TransactionsPage() {
 
       {/* Import/Export */}
       <ImportExportPanel
+        scope="transactions"
         importType="inventory"
         exportType="inventory"
         exportLabel="입출고 내역"

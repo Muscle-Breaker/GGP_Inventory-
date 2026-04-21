@@ -1,22 +1,21 @@
 'use client';
 
 import { useEffect, useState, useCallback, Suspense } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import {
   Plus, Search, Edit2, Trash2, Package,
-  X, Upload, RefreshCw, ChevronDown, Image as ImageIcon
+  X, Upload, RefreshCw, ChevronDown, Image as ImageIcon, CheckSquare, Square,
 } from 'lucide-react';
 import type { Product } from '@/lib/types';
 import ImportExportPanel from '@/components/ImportExportPanel';
 
 const EMPTY_FORM = {
-  name: '', sku: '', category: '', color: '', size: '',
+  name: '', english_name: '', sku: '', category: '', color: '', size: '',
   sale_price: '', cost_price: '', current_stock: '', image_url: ''
 };
 
 function ProductsContent() {
   const searchParams = useSearchParams();
-  const router = useRouter();
 
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,6 +31,11 @@ function ProductsContent() {
   const [error, setError] = useState('');
   const [deleteId, setDeleteId] = useState<number | null>(null);
 
+  // Bulk select
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [showBulkConfirm, setShowBulkConfirm] = useState(false);
+
   const fetchProducts = useCallback(async () => {
     setLoading(true);
     const params = new URLSearchParams();
@@ -42,9 +46,9 @@ function ProductsContent() {
     const data = await res.json();
     setProducts(data);
     setLoading(false);
-
     const cats = [...new Set(data.map((p: Product) => p.category).filter(Boolean))] as string[];
     setCategories(cats);
+    setSelectedIds(new Set()); // reset selection on reload
   }, [search, category, outOfStock]);
 
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
@@ -59,8 +63,9 @@ function ProductsContent() {
   const openEdit = (p: Product) => {
     setEditProduct(p);
     setForm({
-      name: p.name, sku: p.sku, category: p.category || '', color: p.color || '',
-      size: p.size || '', sale_price: String(p.sale_price), cost_price: String(p.cost_price),
+      name: p.name, english_name: p.english_name || '', sku: p.sku,
+      category: p.category || '', color: p.color || '', size: p.size || '',
+      sale_price: String(p.sale_price), cost_price: String(p.cost_price),
       current_stock: String(p.current_stock), image_url: p.image_url || ''
     });
     setError('');
@@ -69,7 +74,7 @@ function ProductsContent() {
 
   const handleSave = async () => {
     if (!form.name.trim() || !form.sku.trim()) {
-      setError('상품명과 SKU는 필수입니다');
+      setError('상품명과 품번(SKU)은 필수입니다');
       return;
     }
     setSaving(true);
@@ -99,6 +104,18 @@ function ProductsContent() {
     fetchProducts();
   };
 
+  const handleBulkDelete = async () => {
+    setBulkDeleting(true);
+    await fetch('/api/products', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [...selectedIds] }),
+    });
+    setBulkDeleting(false);
+    setShowBulkConfirm(false);
+    fetchProducts();
+  };
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -111,6 +128,24 @@ function ProductsContent() {
     setImgUploading(false);
   };
 
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    if (selectedIds.size === products.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(products.map(p => p.id)));
+    }
+  };
+
+  const allSelected = products.length > 0 && selectedIds.size === products.length;
+
   return (
     <div className="p-6 space-y-5 max-w-[1400px] mx-auto">
       {/* Header */}
@@ -119,13 +154,24 @@ function ProductsContent() {
           <h1 className="text-xl font-bold text-gray-900">상품 관리</h1>
           <p className="text-sm text-gray-500 mt-0.5">총 {products.length}개 상품</p>
         </div>
-        <button onClick={openAdd} className="btn-primary">
-          <Plus size={16} /> 상품 등록
-        </button>
+        <div className="flex items-center gap-2">
+          {selectedIds.size > 0 && (
+            <button
+              onClick={() => setShowBulkConfirm(true)}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100 transition-colors"
+            >
+              <Trash2 size={14} /> 선택 삭제 ({selectedIds.size}개)
+            </button>
+          )}
+          <button onClick={openAdd} className="btn-primary">
+            <Plus size={16} /> 상품 등록
+          </button>
+        </div>
       </div>
 
       {/* Import/Export */}
       <ImportExportPanel
+        scope="products"
         importType="products"
         exportType="products"
         exportLabel="상품 목록"
@@ -141,7 +187,7 @@ function ProductsContent() {
               type="text"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="상품명, SKU 검색..."
+              placeholder="상품명, 품번 검색..."
               className="form-input pl-9"
             />
           </div>
@@ -174,8 +220,16 @@ function ProductsContent() {
           <table className="data-table">
             <thead>
               <tr>
+                <th className="w-10">
+                  <button onClick={toggleAll} className="flex items-center justify-center w-full">
+                    {allSelected
+                      ? <CheckSquare size={16} className="text-blue-600" />
+                      : <Square size={16} className="text-gray-300" />
+                    }
+                  </button>
+                </th>
                 <th>상품명</th>
-                <th>SKU</th>
+                <th>품번</th>
                 <th>카테고리</th>
                 <th>색상</th>
                 <th>사이즈</th>
@@ -187,18 +241,26 @@ function ProductsContent() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={9} className="text-center py-12 text-gray-400">
+                <tr><td colSpan={10} className="text-center py-12 text-gray-400">
                   <RefreshCw size={18} className="animate-spin mx-auto mb-2" />
                 </td></tr>
               ) : products.length === 0 ? (
-                <tr><td colSpan={9} className="text-center py-16">
+                <tr><td colSpan={10} className="text-center py-16">
                   <Package size={32} className="text-gray-200 mx-auto mb-3" />
                   <p className="text-sm text-gray-400">상품이 없습니다</p>
                   <button onClick={openAdd} className="mt-3 text-sm text-blue-600 hover:underline">상품 등록하기</button>
                 </td></tr>
               ) : (
                 products.map(p => (
-                  <tr key={p.id}>
+                  <tr key={p.id} className={selectedIds.has(p.id) ? 'bg-blue-50' : ''}>
+                    <td>
+                      <button onClick={() => toggleSelect(p.id)} className="flex items-center justify-center w-full">
+                        {selectedIds.has(p.id)
+                          ? <CheckSquare size={16} className="text-blue-600" />
+                          : <Square size={16} className="text-gray-300 hover:text-gray-500" />
+                        }
+                      </button>
+                    </td>
                     <td>
                       <div className="flex items-center gap-3">
                         {p.image_url ? (
@@ -208,7 +270,10 @@ function ProductsContent() {
                             <ImageIcon size={14} className="text-gray-400" />
                           </div>
                         )}
-                        <span className="font-medium text-gray-800">{p.name}</span>
+                        <div>
+                          <p className="font-medium text-gray-800">{p.name}</p>
+                          {p.english_name && <p className="text-xs text-gray-400">{p.english_name}</p>}
+                        </div>
                       </div>
                     </td>
                     <td><code className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">{p.sku}</code></td>
@@ -281,12 +346,16 @@ function ProductsContent() {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
+                <div>
                   <label className="form-label">상품명 *</label>
                   <input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className="form-input" placeholder="예) 오버핏 반팔 티셔츠" />
                 </div>
                 <div>
-                  <label className="form-label">SKU 코드 *</label>
+                  <label className="form-label">영문명</label>
+                  <input type="text" value={form.english_name} onChange={e => setForm(f => ({ ...f, english_name: e.target.value }))} className="form-input" placeholder="예) Overfit T-shirt" />
+                </div>
+                <div>
+                  <label className="form-label">품번 (SKU) *</label>
                   <input type="text" value={form.sku} onChange={e => setForm(f => ({ ...f, sku: e.target.value }))} className="form-input" placeholder="예) TS-001-WHT-M" />
                 </div>
                 <div>
@@ -331,7 +400,7 @@ function ProductsContent() {
         </div>
       )}
 
-      {/* Delete Confirm */}
+      {/* Single Delete Confirm */}
       {deleteId !== null && (
         <div className="modal-overlay" onClick={() => setDeleteId(null)}>
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -343,6 +412,27 @@ function ProductsContent() {
             <div className="flex gap-3">
               <button onClick={() => setDeleteId(null)} className="btn-secondary flex-1 justify-center">취소</button>
               <button onClick={() => handleDelete(deleteId)} className="btn-danger flex-1 justify-center">삭제</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Delete Confirm */}
+      {showBulkConfirm && (
+        <div className="modal-overlay" onClick={() => setShowBulkConfirm(false)}>
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Trash2 size={20} className="text-red-500" />
+            </div>
+            <h3 className="font-bold text-gray-900 text-center mb-2">일괄 삭제</h3>
+            <p className="text-sm text-gray-500 text-center mb-5">
+              선택한 <strong className="text-gray-800">{selectedIds.size}개</strong> 상품과 관련 재고 내역이 모두 삭제됩니다.
+            </p>
+            <div className="flex gap-3">
+              <button onClick={() => setShowBulkConfirm(false)} className="btn-secondary flex-1 justify-center">취소</button>
+              <button onClick={handleBulkDelete} disabled={bulkDeleting} className="btn-danger flex-1 justify-center">
+                {bulkDeleting ? <RefreshCw size={14} className="animate-spin" /> : null} 삭제
+              </button>
             </div>
           </div>
         </div>

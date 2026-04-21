@@ -29,6 +29,7 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS products (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    english_name TEXT DEFAULT '',
     sku TEXT UNIQUE NOT NULL,
     category TEXT DEFAULT '',
     color TEXT DEFAULT '',
@@ -62,6 +63,17 @@ const SCHEMA = [
     name TEXT NOT NULL UNIQUE,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`,
+  `CREATE TABLE IF NOT EXISTS google_sheets_connections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    import_type TEXT NOT NULL,
+    last_synced TEXT,
+    last_imported INTEGER DEFAULT 0,
+    last_skipped INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`,
 ];
 
 export async function getDb(): Promise<Client> {
@@ -70,6 +82,14 @@ export async function getDb(): Promise<Client> {
 
   for (const sql of SCHEMA) {
     await c.execute(sql);
+  }
+
+  // Migrations: add columns that may not exist in older DBs
+  const migrations = [
+    `ALTER TABLE products ADD COLUMN english_name TEXT DEFAULT ''`,
+  ];
+  for (const m of migrations) {
+    try { await c.execute(m); } catch { /* column already exists */ }
   }
 
   const { rows: cr } = await c.execute('SELECT COUNT(*) as n FROM sales_channels');

@@ -1,6 +1,7 @@
 export interface Product {
   id: number;
   name: string;
+  english_name: string;
   sku: string;
   category: string;
   color: string;
@@ -11,6 +12,18 @@ export interface Product {
   image_url: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface GoogleSheetConnection {
+  id: number;
+  name: string;
+  url: string;
+  scope: string;
+  import_type: string;
+  last_synced: string | null;
+  last_imported: number;
+  last_skipped: number;
+  created_at: string;
 }
 
 export interface InventoryTransaction {

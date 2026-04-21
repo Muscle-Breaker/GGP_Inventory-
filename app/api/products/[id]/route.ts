@@ -20,10 +20,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const existing = await qOne<Product>('SELECT * FROM products WHERE id = ?', [id]);
     if (!existing) return NextResponse.json({ error: '상품을 찾을 수 없습니다' }, { status: 404 });
 
-    const { name, sku, category, color, size, sale_price, cost_price, image_url } = await req.json();
+    const { name, english_name, sku, category, color, size, sale_price, cost_price, image_url } = await req.json();
     await exec(
-      `UPDATE products SET name=?, sku=?, category=?, color=?, size=?, sale_price=?, cost_price=?, image_url=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-      [name, sku, category || '', color || '', size || '', sale_price || 0, cost_price || 0, image_url || '', id]
+      `UPDATE products SET name=?, english_name=?, sku=?, category=?, color=?, size=?, sale_price=?, cost_price=?, image_url=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+      [name, english_name || '', sku, category || '', color || '', size || '', sale_price || 0, cost_price || 0, image_url || '', id]
     );
 
     const product = await qOne<Product>('SELECT * FROM products WHERE id = ?', [id]);

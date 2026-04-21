@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Search, RefreshCw, ChevronDown, ArrowLeftRight, AlertTriangle, Package, Image as ImageIcon } from 'lucide-react';
+import { Search, RefreshCw, ChevronDown, ArrowLeftRight, AlertTriangle, Package, Image as ImageIcon, Calendar, X } from 'lucide-react';
 import Link from 'next/link';
 import type { Product } from '@/lib/types';
 import ImportExportPanel from '@/components/ImportExportPanel';
@@ -13,6 +13,8 @@ export default function InventoryPage() {
   const [category, setCategory] = useState('');
   const [stockFilter, setStockFilter] = useState('');
   const [categories, setCategories] = useState<string[]>([]);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   const fetchProducts = useCallback(async () => {
     setLoading(true);
@@ -20,13 +22,15 @@ export default function InventoryPage() {
     if (search) params.set('search', search);
     if (category) params.set('category', category);
     if (stockFilter === 'out') params.set('outOfStock', 'true');
+    if (dateFrom) params.set('dateFrom', dateFrom);
+    if (dateTo)   params.set('dateTo', dateTo);
     const res = await fetch(`/api/products?${params}`);
     const data: Product[] = await res.json();
     setProducts(data);
     const cats = [...new Set(data.map(p => p.category).filter(Boolean))] as string[];
     setCategories(cats);
     setLoading(false);
-  }, [search, category, stockFilter]);
+  }, [search, category, stockFilter, dateFrom, dateTo]);
 
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
 
@@ -76,7 +80,7 @@ export default function InventoryPage() {
       </div>
 
       {/* Filters */}
-      <div className="card p-4">
+      <div className="card p-4 space-y-3">
         <div className="flex flex-wrap gap-3">
           <div className="relative flex-1 min-w-[200px]">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -100,6 +104,23 @@ export default function InventoryPage() {
             </select>
             <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
           </div>
+        </div>
+        {/* Date range */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex items-center gap-1 text-xs text-gray-500 font-medium whitespace-nowrap">
+            <Calendar size={12} /> 등록일
+          </span>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+            className="form-input text-sm w-auto" />
+          <span className="text-gray-400 text-sm">~</span>
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+            className="form-input text-sm w-auto" />
+          {(dateFrom || dateTo) && (
+            <button onClick={() => { setDateFrom(''); setDateTo(''); }}
+              className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded-lg hover:bg-gray-100 transition-colors">
+              <X size={12} /> 초기화
+            </button>
+          )}
         </div>
       </div>
 

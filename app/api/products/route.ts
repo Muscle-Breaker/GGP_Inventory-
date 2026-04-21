@@ -9,12 +9,17 @@ export async function GET(req: NextRequest) {
     const category = searchParams.get('category') || '';
     const outOfStock = searchParams.get('outOfStock') === 'true';
 
+    const dateFrom = searchParams.get('dateFrom') || '';
+    const dateTo   = searchParams.get('dateTo')   || '';
+
     let sql = 'SELECT * FROM products WHERE 1=1';
     const args: (string | number)[] = [];
 
-    if (search) { sql += ' AND (name LIKE ? OR sku LIKE ?)'; args.push(`%${search}%`, `%${search}%`); }
-    if (category) { sql += ' AND category = ?'; args.push(category); }
+    if (search)    { sql += ' AND (name LIKE ? OR sku LIKE ?)'; args.push(`%${search}%`, `%${search}%`); }
+    if (category)  { sql += ' AND category = ?'; args.push(category); }
     if (outOfStock) sql += ' AND current_stock = 0';
+    if (dateFrom)  { sql += ' AND DATE(created_at) >= ?'; args.push(dateFrom); }
+    if (dateTo)    { sql += ' AND DATE(created_at) <= ?'; args.push(dateTo); }
     sql += ' ORDER BY updated_at DESC';
 
     const products = await qAll<Product>(sql, args);

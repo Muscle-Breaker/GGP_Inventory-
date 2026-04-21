@@ -1,7 +1,11 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Plus, Search, Trash2, RefreshCw, ChevronDown, ArrowDown, ArrowUp, X, Package } from 'lucide-react';
+import {
+  Plus, Search, Trash2, RefreshCw, ChevronDown,
+  ArrowDown, ArrowUp, X, Package, CheckSquare, Square,
+  ArrowUpDown, ChevronsUpDown,
+} from 'lucide-react';
 import type { InventoryTransaction, SalesChannel } from '@/lib/types';
 import { TRANSACTION_LABELS, TRANSACTION_COLORS, type TransactionType } from '@/lib/types';
 import ImportExportPanel from '@/components/ImportExportPanel';
@@ -9,12 +13,17 @@ import ImportExportPanel from '@/components/ImportExportPanel';
 interface Product { id: number; name: string; sku: string; current_stock: number; }
 
 const TX_TYPES: { value: TransactionType; label: string; color: string }[] = [
-  { value: 'STOCK_IN',   label: '입고',    color: 'bg-green-50 border-green-200 text-green-700' },
-  { value: 'SALE',       label: '판매',    color: 'bg-blue-50 border-blue-200 text-blue-700' },
-  { value: 'RETURN',     label: '반품',    color: 'bg-yellow-50 border-yellow-200 text-yellow-700' },
-  { value: 'DISPOSAL',   label: '폐기',    color: 'bg-red-50 border-red-200 text-red-700' },
-  { value: 'OTHER_OUT',  label: '기타출고', color: 'bg-gray-50 border-gray-200 text-gray-700' },
+  { value: 'STOCK_IN',  label: '입고',    color: 'bg-green-50 border-green-200 text-green-700' },
+  { value: 'SALE',      label: '판매',    color: 'bg-blue-50 border-blue-200 text-blue-700' },
+  { value: 'RETURN',    label: '반품',    color: 'bg-yellow-50 border-yellow-200 text-yellow-700' },
+  { value: 'DISPOSAL',  label: '폐기',    color: 'bg-red-50 border-red-200 text-red-700' },
+  { value: 'OTHER_OUT', label: '기타출고', color: 'bg-gray-50 border-gray-200 text-gray-700' },
 ];
+
+function fmtDate(raw: string | undefined | null): string {
+  if (!raw) return '-';
+  return String(raw).slice(0, 10); // YYYY-MM-DD
+}
 
 export default function TransactionsPage() {
   const [transactions, setTransactions] = useState<InventoryTransaction[]>([]);
@@ -22,12 +31,20 @@ export default function TransactionsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [sortOrder, setSortOrder] = useState<'date_desc' | 'date_asc'>('date_desc');
   const [products, setProducts] = useState<Product[]>([]);
   const [channels, setChannels] = useState<SalesChannel[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  // Bulk select
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [showBulkConfirm, setShowBulkConfirm] = useState(false);
 
   const [form, setForm] = useState({
     product_id: '', type: 'STOCK_IN' as TransactionType,
@@ -39,14 +56,19 @@ export default function TransactionsPage() {
   const fetchTransactions = useCallback(async () => {
     setLoading(true);
     const params = new URLSearchParams();
-    if (search) params.set('search', search);
+    if (search)    params.set('search', search);
     if (typeFilter) params.set('type', typeFilter);
-    const res = await fetch(`/api/inventory?${params}&limit=100`);
+    if (dateFrom)  params.set('dateFrom', dateFrom);
+    if (dateTo)    params.set('dateTo', dateTo);
+    params.set('sort', sortOrder);
+    params.set('limit', '200');
+    const res = await fetch(`/api/inventory?${params}`);
     const data = await res.json();
     setTransactions(data.transactions || []);
     setTotal(data.total || 0);
     setLoading(false);
-  }, [search, typeFilter]);
+    setSelectedIds(new Set());
+  }, [search, typeFilter, dateFrom, dateTo, sortOrder]);
 
   useEffect(() => {
     fetchTransactions();
@@ -81,6 +103,19 @@ export default function TransactionsPage() {
     fetch('/api/products').then(r => r.json()).then(setProducts);
   };
 
+  const handleBulkDelete = async () => {
+    setBulkDeleting(true);
+    await fetch('/api/inventory', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [...selectedIds] }),
+    });
+    setBulkDeleting(false);
+    setShowBulkConfirm(false);
+    fetchTransactions();
+    fetch('/api/products').then(r => r.json()).then(setProducts);
+  };
+
   const openModal = (type?: TransactionType) => {
     setForm(f => ({
       ...f, type: type || 'STOCK_IN',
@@ -91,16 +126,47 @@ export default function TransactionsPage() {
     setShowModal(true);
   };
 
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    setSelectedIds(prev =>
+      prev.size === transactions.length
+        ? new Set()
+        : new Set(transactions.map(t => t.id))
+    );
+  };
+
+  const allSelected = transactions.length > 0 && selectedIds.size === transactions.length;
+
+  const clearDates = () => { setDateFrom(''); setDateTo(''); };
+
   return (
     <div className="p-6 space-y-5 max-w-[1400px] mx-auto">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-gray-900">입출고 관리</h1>
           <p className="text-sm text-gray-500 mt-0.5">총 {total}건 내역</p>
         </div>
-        <button onClick={() => openModal()} className="btn-primary">
-          <Plus size={16} /> 내역 등록
-        </button>
+        <div className="flex items-center gap-2">
+          {selectedIds.size > 0 && (
+            <button
+              onClick={() => setShowBulkConfirm(true)}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100 transition-colors"
+            >
+              <Trash2 size={14} /> 선택 삭제 ({selectedIds.size}개)
+            </button>
+          )}
+          <button onClick={() => openModal()} className="btn-primary">
+            <Plus size={16} /> 내역 등록
+          </button>
+        </div>
       </div>
 
       {/* Import/Export */}
@@ -124,7 +190,8 @@ export default function TransactionsPage() {
       </div>
 
       {/* Filters */}
-      <div className="card p-4">
+      <div className="card p-4 space-y-3">
+        {/* Row 1: search + type */}
         <div className="flex flex-wrap gap-3">
           <div className="relative flex-1 min-w-[200px]">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -140,6 +207,21 @@ export default function TransactionsPage() {
             <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
           </div>
         </div>
+        {/* Row 2: date range */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-gray-500 font-medium whitespace-nowrap">날짜 범위</span>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+            className="form-input text-sm w-auto" />
+          <span className="text-gray-400 text-sm">~</span>
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+            className="form-input text-sm w-auto" />
+          {(dateFrom || dateTo) && (
+            <button onClick={clearDates}
+              className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded-lg hover:bg-gray-100 transition-colors">
+              <X size={12} /> 초기화
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Table */}
@@ -148,28 +230,70 @@ export default function TransactionsPage() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>상품</th><th>유형</th><th>수량</th><th>판매처</th>
-                <th>비고</th><th>처리일</th><th>처리자</th><th>삭제</th>
+                <th className="w-10">
+                  <button onClick={toggleAll} className="flex items-center justify-center w-full">
+                    {allSelected
+                      ? <CheckSquare size={16} className="text-blue-600" />
+                      : <Square size={16} className="text-gray-300" />}
+                  </button>
+                </th>
+                {/* 날짜 - 정렬 버튼 포함, 맨 앞 */}
+                <th>
+                  <button
+                    onClick={() => setSortOrder(o => o === 'date_desc' ? 'date_asc' : 'date_desc')}
+                    className="flex items-center gap-1 hover:text-blue-600 transition-colors"
+                  >
+                    날짜
+                    {sortOrder === 'date_desc'
+                      ? <ArrowDown size={12} className="text-blue-500" />
+                      : sortOrder === 'date_asc'
+                        ? <ArrowUp size={12} className="text-blue-500" />
+                        : <ChevronsUpDown size={12} className="text-gray-300" />
+                    }
+                  </button>
+                </th>
+                <th>상품</th>
+                <th>유형</th>
+                <th>수량</th>
+                <th>판매처</th>
+                <th>비고</th>
+                <th>처리자</th>
+                <th>삭제</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={8} className="text-center py-12">
+                <tr><td colSpan={9} className="text-center py-12">
                   <RefreshCw size={18} className="animate-spin mx-auto text-gray-300" />
                 </td></tr>
               ) : transactions.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-16">
+                <tr><td colSpan={9} className="text-center py-16">
                   <Package size={32} className="text-gray-200 mx-auto mb-3" />
                   <p className="text-sm text-gray-400">내역이 없습니다</p>
                 </td></tr>
               ) : (
                 transactions.map(tx => (
-                  <tr key={tx.id}>
+                  <tr key={tx.id} className={selectedIds.has(tx.id) ? 'bg-blue-50' : ''}>
+                    <td>
+                      <button onClick={() => toggleSelect(tx.id)} className="flex items-center justify-center w-full">
+                        {selectedIds.has(tx.id)
+                          ? <CheckSquare size={16} className="text-blue-600" />
+                          : <Square size={16} className="text-gray-300 hover:text-gray-500" />}
+                      </button>
+                    </td>
+                    {/* 날짜 맨 앞 */}
+                    <td className="text-gray-700 text-sm font-medium whitespace-nowrap">
+                      {fmtDate(tx.transaction_date)}
+                    </td>
                     <td>
                       <p className="font-medium text-gray-800 text-sm">{tx.product_name}</p>
                       <code className="text-xs text-gray-400">{tx.product_sku}</code>
                     </td>
-                    <td><span className={`badge ${TRANSACTION_COLORS[tx.type]}`}>{TRANSACTION_LABELS[tx.type]}</span></td>
+                    <td>
+                      <span className={`badge ${TRANSACTION_COLORS[tx.type]}`}>
+                        {TRANSACTION_LABELS[tx.type]}
+                      </span>
+                    </td>
                     <td>
                       <span className={`font-semibold text-sm ${tx.type === 'STOCK_IN' || tx.type === 'RETURN' ? 'text-green-600' : 'text-red-500'}`}>
                         {tx.type === 'STOCK_IN' || tx.type === 'RETURN' ? '+' : '-'}{tx.quantity}
@@ -177,10 +301,10 @@ export default function TransactionsPage() {
                     </td>
                     <td className="text-gray-500 text-sm">{tx.sales_channel || '-'}</td>
                     <td className="text-gray-500 text-sm max-w-[150px] truncate">{tx.note || '-'}</td>
-                    <td className="text-gray-500 text-sm whitespace-nowrap">{tx.transaction_date}</td>
                     <td className="text-gray-500 text-sm">{tx.created_by}</td>
                     <td>
-                      <button onClick={() => setDeleteId(tx.id)} className="p-1.5 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-500 transition-colors">
+                      <button onClick={() => setDeleteId(tx.id)}
+                        className="p-1.5 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-500 transition-colors">
                         <Trash2 size={14} />
                       </button>
                     </td>
@@ -198,7 +322,9 @@ export default function TransactionsPage() {
           <div className="modal-box" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
               <h2 className="font-bold text-gray-900">입출고 등록</h2>
-              <button onClick={() => setShowModal(false)} className="p-1 hover:bg-gray-100 rounded-lg"><X size={18} className="text-gray-500" /></button>
+              <button onClick={() => setShowModal(false)} className="p-1 hover:bg-gray-100 rounded-lg">
+                <X size={18} className="text-gray-500" />
+              </button>
             </div>
             <div className="p-6 space-y-4">
               {error && <div className="bg-red-50 text-red-600 text-sm px-4 py-2.5 rounded-lg border border-red-100">{error}</div>}
@@ -283,6 +409,7 @@ export default function TransactionsPage() {
         </div>
       )}
 
+      {/* Single Delete Confirm */}
       {deleteId !== null && (
         <div className="modal-overlay" onClick={() => setDeleteId(null)}>
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -294,6 +421,27 @@ export default function TransactionsPage() {
             <div className="flex gap-3">
               <button onClick={() => setDeleteId(null)} className="btn-secondary flex-1 justify-center">취소</button>
               <button onClick={() => handleDelete(deleteId)} className="btn-danger flex-1 justify-center">삭제</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Delete Confirm */}
+      {showBulkConfirm && (
+        <div className="modal-overlay" onClick={() => setShowBulkConfirm(false)}>
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Trash2 size={20} className="text-red-500" />
+            </div>
+            <h3 className="font-bold text-gray-900 text-center mb-2">일괄 삭제</h3>
+            <p className="text-sm text-gray-500 text-center mb-5">
+              선택한 <strong className="text-gray-800">{selectedIds.size}개</strong> 내역이 삭제되고 재고가 원복됩니다.
+            </p>
+            <div className="flex gap-3">
+              <button onClick={() => setShowBulkConfirm(false)} className="btn-secondary flex-1 justify-center">취소</button>
+              <button onClick={handleBulkDelete} disabled={bulkDeleting} className="btn-danger flex-1 justify-center">
+                {bulkDeleting ? <RefreshCw size={14} className="animate-spin" /> : null} 삭제
+              </button>
             </div>
           </div>
         </div>

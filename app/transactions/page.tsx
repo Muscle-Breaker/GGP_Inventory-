@@ -12,6 +12,7 @@ import ImportExportPanel from '@/components/ImportExportPanel';
 
 interface Product { id: number; name: string; sku: string; current_stock: number; }
 const PAGE_SIZE = 100;
+type TransactionSection = 'ALL' | TransactionType;
 
 const TX_TYPES: { value: TransactionType; label: string; color: string }[] = [
   { value: 'STOCK_IN',  label: '입고',    color: 'bg-green-50 border-green-200 text-green-700' },
@@ -19,6 +20,10 @@ const TX_TYPES: { value: TransactionType; label: string; color: string }[] = [
   { value: 'RETURN',    label: '반품',    color: 'bg-yellow-50 border-yellow-200 text-yellow-700' },
   { value: 'DISPOSAL',  label: '폐기',    color: 'bg-red-50 border-red-200 text-red-700' },
   { value: 'OTHER_OUT', label: '기타출고', color: 'bg-gray-50 border-gray-200 text-gray-700' },
+];
+const TX_SECTIONS: { value: TransactionSection; label: string }[] = [
+  { value: 'ALL', label: '통합' },
+  ...TX_TYPES.map(({ value, label }) => ({ value, label })),
 ];
 
 function fmtDate(raw: string | number | undefined | null): string {
@@ -39,7 +44,7 @@ export default function TransactionsPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [typeFilter, setTypeFilter] = useState('');
+  const [activeSection, setActiveSection] = useState<TransactionSection>('ALL');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [sortOrder, setSortOrder] = useState<'date_desc' | 'date_asc'>('date_desc');
@@ -72,7 +77,7 @@ export default function TransactionsPage() {
       setLoading(true);
       const params = new URLSearchParams();
       if (search) params.set('search', search);
-      if (typeFilter) params.set('type', typeFilter);
+      if (activeSection !== 'ALL') params.set('type', activeSection);
       if (dateFrom) params.set('dateFrom', dateFrom);
       if (dateTo) params.set('dateTo', dateTo);
       params.set('sort', sortOrder);
@@ -103,12 +108,15 @@ export default function TransactionsPage() {
     return () => {
       cancelled = true;
     };
-  }, [search, typeFilter, dateFrom, dateTo, sortOrder, currentPage, reloadKey]);
+  }, [search, activeSection, dateFrom, dateTo, sortOrder, currentPage, reloadKey]);
 
   const fetchTransactions = () => {
     setReloadKey(prev => prev + 1);
   };
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const currentTypeLabel = activeSection === 'ALL'
+    ? '통합'
+    : TRANSACTION_LABELS[activeSection];
 
   const selectedProduct = products.find(p => String(p.id) === form.product_id);
 
@@ -196,7 +204,7 @@ export default function TransactionsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-gray-900">입출고 관리</h1>
-          <p className="text-sm text-gray-500 mt-0.5">총 {total}건 내역</p>
+          <p className="text-sm text-gray-500 mt-0.5">{currentTypeLabel} 기준 총 {total}건 내역</p>
         </div>
         <div className="flex items-center gap-2">
           {selectedIds.size > 0 && (
@@ -233,22 +241,39 @@ export default function TransactionsPage() {
         ))}
       </div>
 
+      <div className="card p-2">
+        <div className="flex flex-wrap gap-2">
+          {TX_SECTIONS.map(section => {
+            const active = activeSection === section.value;
+            return (
+              <button
+                key={section.value}
+                type="button"
+                onClick={() => {
+                  setCurrentPage(1);
+                  setActiveSection(section.value);
+                }}
+                className={`px-4 py-2 text-sm font-medium rounded-xl border transition-colors ${
+                  active
+                    ? 'bg-gray-900 text-white border-gray-900 shadow-sm'
+                    : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                {section.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Filters */}
       <div className="card p-4 space-y-3">
-        {/* Row 1: search + type */}
+        {/* Row 1: search */}
         <div className="flex flex-wrap gap-3">
           <div className="relative flex-1 min-w-[200px]">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input type="text" value={search} onChange={e => resetAndSet(setSearch, e.target.value)}
               placeholder="입출고번호, 상품명, SKU 검색..." className="form-input pl-9" />
-          </div>
-          <div className="relative">
-            <select value={typeFilter} onChange={e => resetAndSet(setTypeFilter, e.target.value)}
-              className="form-input pr-8 appearance-none cursor-pointer">
-              <option value="">전체 유형</option>
-              {TX_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-            </select>
-            <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
           </div>
         </div>
         {/* Row 2: date range */}
@@ -314,7 +339,7 @@ export default function TransactionsPage() {
               ) : transactions.length === 0 ? (
                 <tr><td colSpan={10} className="text-center py-16">
                   <Package size={32} className="text-gray-200 mx-auto mb-3" />
-                  <p className="text-sm text-gray-400">내역이 없습니다</p>
+                  <p className="text-sm text-gray-400">{currentTypeLabel} 내역이 없습니다</p>
                 </td></tr>
               ) : (
                 transactions.map(tx => (

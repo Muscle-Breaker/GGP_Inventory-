@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { qOne, exec, batchWrite } from '@/lib/db';
 import { toDateStr } from '@/lib/dateUtils';
+import { formatTransactionNumber, normalizeTransactionNumber } from '@/lib/transactionNumber';
 import * as XLSX from 'xlsx';
 
 export async function POST(req: NextRequest) {
@@ -45,6 +46,7 @@ export async function POST(req: NextRequest) {
         '입고': 'STOCK_IN', '판매': 'SALE', '반품': 'RETURN', '폐기': 'DISPOSAL', '기타출고': 'OTHER_OUT',
       };
       for (const row of data) {
+        const txNumber = normalizeTransactionNumber(row['입출고번호'] || row['transaction_number'] || row['tx_number']);
         const sku = String(row['품번'] || '').trim();
         const productName = String(row['제품명'] || '').trim();
         const color = String(row['색상'] || '').trim();
@@ -71,17 +73,30 @@ export async function POST(req: NextRequest) {
 
         const qty = Number(row['수량'] || 0);
         if (qty <= 0) { skipped++; continue; }
+        if (txNumber) {
+          const existingTx = await qOne<{ id: number }>(
+            'SELECT id FROM inventory_transactions WHERE tx_number = ?',
+            [txNumber]
+          );
+          if (existingTx) { skipped++; continue; }
+        }
 
         const stockChange = (txType === 'STOCK_IN' || txType === 'RETURN') ? qty : -qty;
-        await exec(
-          `INSERT INTO inventory_transactions (product_id, type, quantity, sales_channel, note, transaction_date, created_by)
-           VALUES (?,?,?,?,?,?,?)`,
-          [product.id, txType, qty,
+        const inserted = await exec(
+          `INSERT INTO inventory_transactions (tx_number, product_id, type, quantity, sales_channel, note, transaction_date, created_by)
+           VALUES (?,?,?,?,?,?,?,?)`,
+          [txNumber || null, product.id, txType, qty,
            String(row['경로'] || ''),
            '',
            toDateStr(row['날짜']),
            '가져오기']
         );
+        if (!txNumber && inserted.lastId) {
+          await exec('UPDATE inventory_transactions SET tx_number = ? WHERE id = ?', [
+            formatTransactionNumber(inserted.lastId),
+            inserted.lastId,
+          ]);
+        }
         await exec(
           'UPDATE products SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
           [stockChange, product.id]
@@ -144,6 +159,7 @@ export async function PUT(req: NextRequest) {
         '입고': 'STOCK_IN', '판매': 'SALE', '반품': 'RETURN', '폐기': 'DISPOSAL', '기타출고': 'OTHER_OUT',
       };
       for (const row of data) {
+        const txNumber = normalizeTransactionNumber(row['입출고번호'] || row['transaction_number'] || row['tx_number']);
         const sku = String(row['품번'] || '').trim();
         const productName = String(row['제품명'] || '').trim();
         const color = String(row['색상'] || '').trim();
@@ -170,17 +186,30 @@ export async function PUT(req: NextRequest) {
 
         const qty = Number(row['수량'] || 0);
         if (qty <= 0) { skipped++; continue; }
+        if (txNumber) {
+          const existingTx = await qOne<{ id: number }>(
+            'SELECT id FROM inventory_transactions WHERE tx_number = ?',
+            [txNumber]
+          );
+          if (existingTx) { skipped++; continue; }
+        }
 
         const stockChange = (txType === 'STOCK_IN' || txType === 'RETURN') ? qty : -qty;
-        await exec(
-          `INSERT INTO inventory_transactions (product_id, type, quantity, sales_channel, note, transaction_date, created_by)
-           VALUES (?,?,?,?,?,?,?)`,
-          [product.id, txType, qty,
+        const inserted = await exec(
+          `INSERT INTO inventory_transactions (tx_number, product_id, type, quantity, sales_channel, note, transaction_date, created_by)
+           VALUES (?,?,?,?,?,?,?,?)`,
+          [txNumber || null, product.id, txType, qty,
            String(row['경로'] || ''),
            '',
            toDateStr(row['날짜']),
            '가져오기']
         );
+        if (!txNumber && inserted.lastId) {
+          await exec('UPDATE inventory_transactions SET tx_number = ? WHERE id = ?', [
+            formatTransactionNumber(inserted.lastId),
+            inserted.lastId,
+          ]);
+        }
         await exec(
           'UPDATE products SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
           [stockChange, product.id]
@@ -189,7 +218,7 @@ export async function PUT(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ success: true, imported, skipped: data.length - imported });
+    return NextResponse.json({ success: true, imported, skipped });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: '구글 시트 가져오기 실패' }, { status: 500 });

@@ -147,7 +147,7 @@ export default function DashboardPage() {
               <Clock size={16} className="text-gray-400" />
               <h2 className="font-semibold text-gray-800 text-sm">최근 입출고 내역</h2>
             </div>
-            <Link href="/inventory" className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
+            <Link href="/transactions" className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
               전체보기 <ChevronRight size={12} />
             </Link>
           </div>
@@ -224,7 +224,7 @@ export default function DashboardPage() {
                     }`}>
                       {product.current_stock === 0 ? '품절' : `${product.current_stock}개`}
                     </span>
-                    <Link href="/inventory" className="text-xs text-blue-600 hover:underline">입고</Link>
+                    <Link href="/transactions" className="text-xs text-blue-600 hover:underline">입고</Link>
                   </div>
                 </div>
               ))

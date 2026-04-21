@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Search, RefreshCw, ChevronDown, ArrowLeftRight, AlertTriangle, Package, Image as ImageIcon } from 'lucide-react';
 import Link from 'next/link';
 import type { Product } from '@/lib/types';
+import ImportExportPanel from '@/components/ImportExportPanel';
 
 export default function InventoryPage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -48,6 +49,14 @@ export default function InventoryPage() {
           <ArrowLeftRight size={16} /> 입출고 등록
         </Link>
       </div>
+
+      {/* Import/Export */}
+      <ImportExportPanel
+        importType="inventory"
+        exportType="products"
+        exportLabel="재고 현황"
+        onImported={fetchProducts}
+      />
 
       {/* Summary Cards */}
       <div className="grid grid-cols-3 gap-4">

@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Plus, Search, Trash2, RefreshCw, ChevronDown, ArrowDown, ArrowUp, X, Package } from 'lucide-react';
 import type { InventoryTransaction, SalesChannel } from '@/lib/types';
 import { TRANSACTION_LABELS, TRANSACTION_COLORS, type TransactionType } from '@/lib/types';
+import ImportExportPanel from '@/components/ImportExportPanel';
 
 interface Product { id: number; name: string; sku: string; current_stock: number; }
 
@@ -101,6 +102,14 @@ export default function TransactionsPage() {
           <Plus size={16} /> 내역 등록
         </button>
       </div>
+
+      {/* Import/Export */}
+      <ImportExportPanel
+        importType="inventory"
+        exportType="inventory"
+        exportLabel="입출고 내역"
+        onImported={fetchTransactions}
+      />
 
       {/* Quick Action Buttons */}
       <div className="flex flex-wrap gap-2">

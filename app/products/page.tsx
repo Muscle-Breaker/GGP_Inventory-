@@ -3,10 +3,11 @@
 import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
-  Plus, Search, Filter, Edit2, Trash2, Package,
+  Plus, Search, Edit2, Trash2, Package,
   X, Upload, RefreshCw, ChevronDown, Image as ImageIcon
 } from 'lucide-react';
 import type { Product } from '@/lib/types';
+import ImportExportPanel from '@/components/ImportExportPanel';
 
 const EMPTY_FORM = {
   name: '', sku: '', category: '', color: '', size: '',
@@ -122,6 +123,14 @@ function ProductsContent() {
           <Plus size={16} /> 상품 등록
         </button>
       </div>
+
+      {/* Import/Export */}
+      <ImportExportPanel
+        importType="products"
+        exportType="products"
+        exportLabel="상품 목록"
+        onImported={fetchProducts}
+      />
 
       {/* Filters */}
       <div className="card p-4">

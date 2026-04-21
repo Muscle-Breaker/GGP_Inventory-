@@ -3,6 +3,7 @@ import { qOne, exec, qAll } from '@/lib/db';
 import { batchWrite } from '@/lib/db';
 import type { GoogleSheetConnection } from '@/lib/types';
 import { toDateStr } from '@/lib/dateUtils';
+import { getSheetValue, normalizeSheetRow } from '@/lib/sheetUtils';
 import { formatTransactionNumber, normalizeTransactionNumber } from '@/lib/transactionNumber';
 import * as XLSX from 'xlsx';
 
@@ -38,7 +39,8 @@ export async function POST(_req: NextRequest, { params }: Params) {
     if (!response.ok) throw new Error('시트에서 데이터를 가져올 수 없습니다. 공유 설정을 확인하세요.');
     const text = await response.text();
     const wb = XLSX.read(text, { type: 'string', cellDates: true });
-    const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { raw: true }) as Record<string, unknown>[];
+    const data = (XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { raw: true }) as Record<string, unknown>[])
+      .map(normalizeSheetRow);
 
     let imported = 0;
     let skipped = 0;
@@ -70,7 +72,7 @@ export async function POST(_req: NextRequest, { params }: Params) {
         '입고': 'STOCK_IN', '판매': 'SALE', '반품': 'RETURN', '폐기': 'DISPOSAL', '기타출고': 'OTHER_OUT',
       };
       for (const row of data) {
-        const txNumber = normalizeTransactionNumber(row['입출고번호'] || row['transaction_number'] || row['tx_number']);
+        const txNumber = normalizeTransactionNumber(getSheetValue(row, ['입출고번호', 'transaction_number', 'tx_number']));
         const sku = String(row['품번'] || '').trim();
         const productName = String(row['제품명'] || '').trim();
         const color = String(row['색상'] || '').trim();
@@ -105,6 +107,7 @@ export async function POST(_req: NextRequest, { params }: Params) {
           if (existingTx) { skipped++; continue; }
         }
 
+        const transactionDate = toDateStr(getSheetValue(row, ['날짜', '처리일', '거래일', 'transaction_date', 'date']));
         const stockChange = (txType === 'STOCK_IN' || txType === 'RETURN') ? qty : -qty;
         const inserted = await exec(
           `INSERT INTO inventory_transactions (tx_number, product_id, type, quantity, sales_channel, note, transaction_date, created_by)
@@ -112,7 +115,7 @@ export async function POST(_req: NextRequest, { params }: Params) {
           [txNumber || null, product.id, txType, qty,
            String(row['경로'] || ''),
            '',
-           toDateStr(row['날짜']),
+           transactionDate,
            '구글시트']
         );
         if (!txNumber && inserted.lastId) {

@@ -23,6 +23,11 @@ export function toDateStr(value: unknown, fallback?: string): string {
         return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       }
     }
+    const koreanDateMatch = s.match(/^(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일$/);
+    if (koreanDateMatch) {
+      const [, year, month, day] = koreanDateMatch;
+      return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    }
     // 다른 문자열 날짜 파싱 시도
     const d = new Date(s);
     if (!isNaN(d.getTime())) return formatLocalDate(d);

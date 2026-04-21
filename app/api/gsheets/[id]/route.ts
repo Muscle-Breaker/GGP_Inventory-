@@ -68,8 +68,8 @@ export async function POST(_req: NextRequest, { params }: Params) {
         '입고': 'STOCK_IN', '판매': 'SALE', '반품': 'RETURN', '폐기': 'DISPOSAL', '기타출고': 'OTHER_OUT',
       };
       for (const row of data) {
-        const sku = String(row['품번'] || row['SKU'] || row['sku'] || '').trim();
-        const productName = String(row['제품명'] || row['상품명'] || '').trim();
+        const sku = String(row['품번'] || '').trim();
+        const productName = String(row['제품명'] || '').trim();
         const color = String(row['색상'] || '').trim();
         const size = String(row['사이즈'] || '').trim();
 
@@ -100,10 +100,10 @@ export async function POST(_req: NextRequest, { params }: Params) {
           `INSERT INTO inventory_transactions (product_id, type, quantity, sales_channel, note, transaction_date, created_by)
            VALUES (?,?,?,?,?,?,?)`,
           [product.id, txType, qty,
-           String(row['경로'] || row['판매처'] || ''),
-           String(row['비고'] || ''),
-           String(row['날짜'] || row['처리일'] || new Date().toISOString().split('T')[0]),
-           String(row['처리자'] || '구글시트')]
+           String(row['경로'] || ''),
+           '',
+           String(row['날짜'] || new Date().toISOString().split('T')[0]),
+           '구글시트']
         );
         await exec(
           'UPDATE products SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',

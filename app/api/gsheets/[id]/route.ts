@@ -3,6 +3,7 @@ import { qOne, exec, qAll } from '@/lib/db';
 import { batchWrite } from '@/lib/db';
 import type { GoogleSheetConnection } from '@/lib/types';
 import { toDateStr } from '@/lib/dateUtils';
+import { upsertInventoryTransaction } from '@/lib/inventoryImport';
 import { getSheetValue, normalizeSheetRow } from '@/lib/sheetUtils';
 import { formatTransactionNumber, normalizeTransactionNumber } from '@/lib/transactionNumber';
 import * as XLSX from 'xlsx';
@@ -43,6 +44,7 @@ export async function POST(_req: NextRequest, { params }: Params) {
       .map(normalizeSheetRow);
 
     let imported = 0;
+    let updatedCount = 0;
     let skipped = 0;
 
     if (conn.import_type === 'products') {
@@ -99,48 +101,40 @@ export async function POST(_req: NextRequest, { params }: Params) {
 
         const qty = Number(row['수량'] || 0);
         if (qty <= 0) { skipped++; continue; }
-        if (txNumber) {
-          const existingTx = await qOne<{ id: number }>(
-            'SELECT id FROM inventory_transactions WHERE tx_number = ?',
-            [txNumber]
-          );
-          if (existingTx) { skipped++; continue; }
-        }
-
         const transactionDate = toDateStr(getSheetValue(row, ['날짜', '처리일', '거래일', 'transaction_date', 'date']));
-        const stockChange = (txType === 'STOCK_IN' || txType === 'RETURN') ? qty : -qty;
-        const inserted = await exec(
-          `INSERT INTO inventory_transactions (tx_number, product_id, type, quantity, sales_channel, note, transaction_date, created_by)
-           VALUES (?,?,?,?,?,?,?,?)`,
-          [txNumber || null, product.id, txType, qty,
-           String(row['경로'] || ''),
-           '',
-           transactionDate,
-           '구글시트']
-        );
-        if (!txNumber && inserted.lastId) {
-          await exec('UPDATE inventory_transactions SET tx_number = ? WHERE id = ?', [
-            formatTransactionNumber(inserted.lastId),
-            inserted.lastId,
-          ]);
+        const result = await upsertInventoryTransaction({
+          txNumber: txNumber || undefined,
+          productId: product.id,
+          type: txType as 'STOCK_IN' | 'SALE' | 'RETURN' | 'DISPOSAL' | 'OTHER_OUT',
+          quantity: qty,
+          salesChannel: String(row['경로'] || ''),
+          note: '',
+          transactionDate,
+          createdBy: '구글시트',
+        });
+        if (!txNumber && result.action === 'inserted' && result.id) {
+            await exec('UPDATE inventory_transactions SET tx_number = ? WHERE id = ?', [
+              formatTransactionNumber(result.id),
+              result.id,
+            ]);
         }
-        await exec(
-          'UPDATE products SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-          [stockChange, product.id]
-        );
-        imported++;
+        if (result.action === 'updated') {
+          updatedCount++;
+        } else {
+          imported++;
+        }
       }
     }
 
     await exec(
       `UPDATE google_sheets_connections SET last_synced = CURRENT_TIMESTAMP, last_imported = ?, last_skipped = ? WHERE id = ?`,
-      [imported, skipped, id]
+      [imported + updatedCount, skipped, id]
     );
 
-    const updated = await qAll<GoogleSheetConnection>(
+    const updatedConnections = await qAll<GoogleSheetConnection>(
       'SELECT * FROM google_sheets_connections WHERE id = ?', [id]
     );
-    return NextResponse.json({ success: true, imported, skipped, connection: updated[0] });
+    return NextResponse.json({ success: true, imported, updated: updatedCount, skipped, connection: updatedConnections[0] });
   } catch (error) {
     const msg = error instanceof Error ? error.message : '동기화 실패';
     console.error(error);

@@ -37,7 +37,7 @@ export default function ImportExportPanel({ scope, importType, exportType, expor
 
   // file import
   const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState<{ imported: number; skipped: number } | null>(null);
+  const [importResult, setImportResult] = useState<{ imported: number; updated?: number; skipped: number } | null>(null);
 
   const fetchSheets = useCallback(async () => {
     const res = await fetch(`/api/gsheets?scope=${scope}`);
@@ -69,7 +69,8 @@ export default function ImportExportPanel({ scope, importType, exportType, expor
       if (data.error) {
         setSyncResults(r => ({ ...r, [id]: `오류: ${data.error}` }));
       } else {
-        setSyncResults(r => ({ ...r, [id]: `${data.imported}개 가져옴, ${data.skipped}개 건너뜀` }));
+        const updatedText = data.updated ? `, ${data.updated}개 업데이트` : '';
+        setSyncResults(r => ({ ...r, [id]: `${data.imported}개 가져옴${updatedText}, ${data.skipped}개 건너뜀` }));
         setSheets(prev => prev.map(s => s.id === id ? data.connection : s));
         if (data.imported > 0) onImported?.();
       }
@@ -259,7 +260,7 @@ export default function ImportExportPanel({ scope, importType, exportType, expor
               <p className="text-xs text-gray-400 mb-3">.xlsx, .xls, .csv 지원</p>
               {importResult && (
                 <div className={`flex items-center gap-1.5 text-xs px-2.5 py-2 rounded-lg mb-3 ${importResult.imported > 0 ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700'}`}>
-                  <Check size={12} /> {importResult.imported}개 가져옴, {importResult.skipped}개 건너뜀
+                  <Check size={12} /> {importResult.imported}개 가져옴{importResult.updated ? `, ${importResult.updated}개 업데이트` : ''}, {importResult.skipped}개 건너뜀
                 </div>
               )}
               <div className="flex flex-col gap-2">

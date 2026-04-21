@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { qOne, exec, batchWrite } from '@/lib/db';
 import { toDateStr } from '@/lib/dateUtils';
+import { upsertInventoryTransaction } from '@/lib/inventoryImport';
 import { getSheetValue, normalizeSheetRow } from '@/lib/sheetUtils';
 import { formatTransactionNumber, normalizeTransactionNumber } from '@/lib/transactionNumber';
 import * as XLSX from 'xlsx';
@@ -19,6 +20,7 @@ export async function POST(req: NextRequest) {
     if (data.length === 0) return NextResponse.json({ error: '데이터가 없습니다' }, { status: 400 });
 
     let imported = 0;
+    let updated = 0;
     let skipped = 0;
 
     if (importType === 'products') {
@@ -75,40 +77,29 @@ export async function POST(req: NextRequest) {
 
         const qty = Number(row['수량'] || 0);
         if (qty <= 0) { skipped++; continue; }
-        if (txNumber) {
-          const existingTx = await qOne<{ id: number }>(
-            'SELECT id FROM inventory_transactions WHERE tx_number = ?',
-            [txNumber]
-          );
-          if (existingTx) { skipped++; continue; }
-        }
-
         const transactionDate = toDateStr(getSheetValue(row, ['날짜', '처리일', '거래일', 'transaction_date', 'date']));
-        const stockChange = (txType === 'STOCK_IN' || txType === 'RETURN') ? qty : -qty;
-        const inserted = await exec(
-          `INSERT INTO inventory_transactions (tx_number, product_id, type, quantity, sales_channel, note, transaction_date, created_by)
-           VALUES (?,?,?,?,?,?,?,?)`,
-          [txNumber || null, product.id, txType, qty,
-           String(row['경로'] || ''),
-           '',
-           transactionDate,
-           '가져오기']
-        );
-        if (!txNumber && inserted.lastId) {
+        const result = await upsertInventoryTransaction({
+          txNumber: txNumber || undefined,
+          productId: product.id,
+          type: txType as 'STOCK_IN' | 'SALE' | 'RETURN' | 'DISPOSAL' | 'OTHER_OUT',
+          quantity: qty,
+          salesChannel: String(row['경로'] || ''),
+          note: '',
+          transactionDate,
+          createdBy: '가져오기',
+        });
+        if (!txNumber && result.action === 'inserted' && result.id) {
           await exec('UPDATE inventory_transactions SET tx_number = ? WHERE id = ?', [
-            formatTransactionNumber(inserted.lastId),
-            inserted.lastId,
+            formatTransactionNumber(result.id),
+            result.id,
           ]);
         }
-        await exec(
-          'UPDATE products SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-          [stockChange, product.id]
-        );
-        imported++;
+        if (result.action === 'updated') updated++;
+        else imported++;
       }
     }
 
-    return NextResponse.json({ success: true, imported, skipped });
+    return NextResponse.json({ success: true, imported, updated, skipped });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: '파일 가져오기 실패' }, { status: 500 });
@@ -134,6 +125,7 @@ export async function PUT(req: NextRequest) {
       .map(normalizeSheetRow);
 
     let imported = 0;
+    let updated = 0;
     let skipped = 0;
 
     if (importType === 'products') {
@@ -190,40 +182,29 @@ export async function PUT(req: NextRequest) {
 
         const qty = Number(row['수량'] || 0);
         if (qty <= 0) { skipped++; continue; }
-        if (txNumber) {
-          const existingTx = await qOne<{ id: number }>(
-            'SELECT id FROM inventory_transactions WHERE tx_number = ?',
-            [txNumber]
-          );
-          if (existingTx) { skipped++; continue; }
-        }
-
         const transactionDate = toDateStr(getSheetValue(row, ['날짜', '처리일', '거래일', 'transaction_date', 'date']));
-        const stockChange = (txType === 'STOCK_IN' || txType === 'RETURN') ? qty : -qty;
-        const inserted = await exec(
-          `INSERT INTO inventory_transactions (tx_number, product_id, type, quantity, sales_channel, note, transaction_date, created_by)
-           VALUES (?,?,?,?,?,?,?,?)`,
-          [txNumber || null, product.id, txType, qty,
-           String(row['경로'] || ''),
-           '',
-           transactionDate,
-           '가져오기']
-        );
-        if (!txNumber && inserted.lastId) {
+        const result = await upsertInventoryTransaction({
+          txNumber: txNumber || undefined,
+          productId: product.id,
+          type: txType as 'STOCK_IN' | 'SALE' | 'RETURN' | 'DISPOSAL' | 'OTHER_OUT',
+          quantity: qty,
+          salesChannel: String(row['경로'] || ''),
+          note: '',
+          transactionDate,
+          createdBy: '가져오기',
+        });
+        if (!txNumber && result.action === 'inserted' && result.id) {
           await exec('UPDATE inventory_transactions SET tx_number = ? WHERE id = ?', [
-            formatTransactionNumber(inserted.lastId),
-            inserted.lastId,
+            formatTransactionNumber(result.id),
+            result.id,
           ]);
         }
-        await exec(
-          'UPDATE products SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-          [stockChange, product.id]
-        );
-        imported++;
+        if (result.action === 'updated') updated++;
+        else imported++;
       }
     }
 
-    return NextResponse.json({ success: true, imported, skipped });
+    return NextResponse.json({ success: true, imported, updated, skipped });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: '구글 시트 가져오기 실패' }, { status: 500 });

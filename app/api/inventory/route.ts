@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { qOne, qAll, exec, getDb } from '@/lib/db';
+import { qOne, qAll, getDb } from '@/lib/db';
 import type { InventoryTransaction } from '@/lib/types';
+import { formatTransactionNumber, normalizeTransactionNumber } from '@/lib/transactionNumber';
 
 interface ProductRow { id: number; current_stock: number; }
 interface TxRow { id: number; product_id: number; type: string; quantity: number; }
@@ -16,32 +17,77 @@ export async function GET(req: NextRequest) {
     const sort      = searchParams.get('sort') || 'date_desc';   // date_asc | date_desc
     const limit     = parseInt(searchParams.get('limit') || '200');
     const offset    = parseInt(searchParams.get('offset') || '0');
+    const txNumberExpr = `COALESCE(NULLIF(t.tx_number, ''), 'TX-' || printf('%06d', t.id))`;
+    const txNumberLikeExpr = `COALESCE(NULLIF(t.tx_number, ''), '')`;
 
-    let sql = `SELECT t.*, p.name as product_name, p.sku as product_sku
-               FROM inventory_transactions t JOIN products p ON t.product_id = p.id WHERE 1=1`;
+    let baseSql = `SELECT
+                     t.id,
+                     ${txNumberExpr} as tx_number,
+                     t.product_id,
+                     t.type,
+                     t.quantity,
+                     t.sales_channel,
+                     t.note,
+                     t.transaction_date,
+                     t.created_by,
+                     t.created_at,
+                     p.name as product_name,
+                     p.sku as product_sku
+                   FROM inventory_transactions t
+                   JOIN products p ON t.product_id = p.id
+                   WHERE 1=1`;
     const args: (string | number)[] = [];
 
-    if (search)    { sql += ' AND (p.name LIKE ? OR p.sku LIKE ?)'; args.push(`%${search}%`, `%${search}%`); }
-    if (type)      { sql += ' AND t.type = ?';       args.push(type); }
-    if (productId) { sql += ' AND t.product_id = ?'; args.push(productId); }
-    if (dateFrom)  { sql += ' AND t.transaction_date >= ?'; args.push(dateFrom); }
-    if (dateTo)    { sql += ' AND t.transaction_date <= ?'; args.push(dateTo); }
+    if (search)    {
+      baseSql += ` AND (${txNumberLikeExpr} LIKE ? OR p.name LIKE ? OR p.sku LIKE ?)`;
+      args.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
+    if (type)      { baseSql += ' AND t.type = ?';       args.push(type); }
+    if (productId) { baseSql += ' AND t.product_id = ?'; args.push(productId); }
+    if (dateFrom)  { baseSql += ' AND t.transaction_date >= ?'; args.push(dateFrom); }
+    if (dateTo)    { baseSql += ' AND t.transaction_date <= ?'; args.push(dateTo); }
 
-    const orderBy = sort === 'date_asc' ? 't.transaction_date ASC, t.id ASC' : 't.transaction_date DESC, t.id DESC';
-    sql += ` ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
-    args.push(limit, offset);
+    const orderBy = sort === 'date_asc'
+      ? 'transaction_date ASC, id ASC'
+      : 'transaction_date DESC, id DESC';
+    const dedupeKey = `COALESCE(NULLIF(tx_number, ''), 'TX-' || printf('%06d', id))`;
+    const sql = `
+      WITH filtered AS (
+        ${baseSql}
+      ),
+      ranked AS (
+        SELECT *,
+               ROW_NUMBER() OVER (
+                 PARTITION BY ${dedupeKey}
+                 ORDER BY id DESC
+               ) as rn
+        FROM filtered
+      )
+      SELECT id, tx_number, product_id, type, quantity, sales_channel, note,
+             transaction_date, created_by, created_at, product_name, product_sku
+      FROM ranked
+      WHERE rn = 1
+      ORDER BY ${orderBy}
+      LIMIT ? OFFSET ?`;
+    const queryArgs = [...args, limit, offset];
 
-    const transactions = await qAll<InventoryTransaction>(sql, args);
+    const transactions = await qAll<InventoryTransaction>(sql, queryArgs);
 
-    let countSql = `SELECT COUNT(*) as n FROM inventory_transactions t JOIN products p ON t.product_id = p.id WHERE 1=1`;
-    const countArgs: (string | number)[] = [];
-    if (search)    { countSql += ' AND (p.name LIKE ? OR p.sku LIKE ?)'; countArgs.push(`%${search}%`, `%${search}%`); }
-    if (type)      { countSql += ' AND t.type = ?';       countArgs.push(type); }
-    if (productId) { countSql += ' AND t.product_id = ?'; countArgs.push(productId); }
-    if (dateFrom)  { countSql += ' AND t.transaction_date >= ?'; countArgs.push(dateFrom); }
-    if (dateTo)    { countSql += ' AND t.transaction_date <= ?'; countArgs.push(dateTo); }
-
-    const countRow = await qOne<{ n: number }>(countSql, countArgs);
+    const countSql = `
+      WITH filtered AS (
+        ${baseSql}
+      ),
+      ranked AS (
+        SELECT ROW_NUMBER() OVER (
+                 PARTITION BY ${dedupeKey}
+                 ORDER BY id DESC
+               ) as rn
+        FROM filtered
+      )
+      SELECT COUNT(*) as n
+      FROM ranked
+      WHERE rn = 1`;
+    const countRow = await qOne<{ n: number }>(countSql, args);
     return NextResponse.json({ transactions, total: countRow?.n ?? 0 });
   } catch (error) {
     console.error(error);
@@ -53,12 +99,22 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { product_id, type, quantity, sales_channel, note, transaction_date, created_by } = body;
+    const txNumber = normalizeTransactionNumber(body.tx_number);
 
     if (!product_id || !type || !quantity) return NextResponse.json({ error: '필수 항목을 입력해주세요' }, { status: 400 });
     if (quantity <= 0) return NextResponse.json({ error: '수량은 1 이상이어야 합니다' }, { status: 400 });
 
     const product = await qOne<ProductRow>('SELECT id, current_stock FROM products WHERE id = ?', [product_id]);
     if (!product) return NextResponse.json({ error: '상품을 찾을 수 없습니다' }, { status: 404 });
+    if (txNumber) {
+      const existing = await qOne<{ id: number }>(
+        'SELECT id FROM inventory_transactions WHERE tx_number = ?',
+        [txNumber]
+      );
+      if (existing) {
+        return NextResponse.json({ error: '이미 존재하는 입출고번호입니다' }, { status: 409 });
+      }
+    }
 
     let stockChange = 0;
     if (type === 'STOCK_IN' || type === 'RETURN') {
@@ -75,12 +131,18 @@ export async function POST(req: NextRequest) {
     let lastId = 0;
     try {
       const r = await tx.execute({
-        sql: `INSERT INTO inventory_transactions (product_id, type, quantity, sales_channel, note, transaction_date, created_by)
-              VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        args: [product_id, type, quantity, sales_channel || '', note || '',
+        sql: `INSERT INTO inventory_transactions (tx_number, product_id, type, quantity, sales_channel, note, transaction_date, created_by)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [txNumber || null, product_id, type, quantity, sales_channel || '', note || '',
                transaction_date || new Date().toISOString().split('T')[0], created_by || '관리자'],
       });
       lastId = r.lastInsertRowid ? Number(r.lastInsertRowid) : 0;
+      if (!txNumber && lastId) {
+        await tx.execute({
+          sql: 'UPDATE inventory_transactions SET tx_number = ? WHERE id = ?',
+          args: [formatTransactionNumber(lastId), lastId],
+        });
+      }
       await tx.execute({
         sql: 'UPDATE products SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
         args: [stockChange, product_id],

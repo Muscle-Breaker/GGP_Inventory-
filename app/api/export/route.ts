@@ -18,14 +18,14 @@ export async function GET(req: NextRequest) {
     }
 
     if (type === 'all' || type === 'inventory') {
-      const txs = await qAll(`SELECT t.transaction_date as '날짜', p.name as '제품명',
+      const txs = await qAll(`SELECT t.tx_number as '입출고번호', t.transaction_date as '날짜', p.name as '제품명',
         p.color as '색상', p.size as '사이즈', p.sku as '품번', t.quantity as '수량',
         CASE t.type WHEN 'STOCK_IN' THEN '입고' WHEN 'SALE' THEN '판매' WHEN 'RETURN' THEN '반품'
           WHEN 'DISPOSAL' THEN '폐기' WHEN 'OTHER_OUT' THEN '기타출고' END as '유형',
         t.sales_channel as '경로'
         FROM inventory_transactions t JOIN products p ON t.product_id = p.id ORDER BY t.created_at DESC`);
       const ws = XLSX.utils.json_to_sheet(txs);
-      ws['!cols'] = [{ wch:12 },{ wch:25 },{ wch:10 },{ wch:8 },{ wch:18 },{ wch:8 },{ wch:10 },{ wch:12 }];
+      ws['!cols'] = [{ wch:14 },{ wch:12 },{ wch:25 },{ wch:10 },{ wch:8 },{ wch:18 },{ wch:8 },{ wch:10 },{ wch:12 }];
       XLSX.utils.book_append_sheet(wb, ws, '입출고내역');
     }
 

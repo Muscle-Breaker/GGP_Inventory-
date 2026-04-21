@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { qAll, qOne, exec, batchWrite } from '@/lib/db';
 import type { Product } from '@/lib/types';
+import { formatTransactionNumber } from '@/lib/transactionNumber';
 
 export async function GET(req: NextRequest) {
   try {
@@ -8,6 +9,8 @@ export async function GET(req: NextRequest) {
     const search = searchParams.get('search') || '';
     const category = searchParams.get('category') || '';
     const outOfStock = searchParams.get('outOfStock') === 'true';
+    const sortField = searchParams.get('sortField') || 'updated_at';
+    const sortOrder = searchParams.get('sortOrder') === 'asc' ? 'asc' : 'desc';
 
     const dateFrom = searchParams.get('dateFrom') || '';
     const dateTo   = searchParams.get('dateTo')   || '';
@@ -20,7 +23,17 @@ export async function GET(req: NextRequest) {
     if (outOfStock) sql += ' AND current_stock = 0';
     if (dateFrom)  { sql += ' AND DATE(created_at) >= ?'; args.push(dateFrom); }
     if (dateTo)    { sql += ' AND DATE(created_at) <= ?'; args.push(dateTo); }
-    sql += ' ORDER BY updated_at DESC';
+
+    const sortableColumns: Record<string, string> = {
+      name: 'name',
+      color: 'color',
+      size: 'size',
+      stock: 'current_stock',
+      updated_at: 'updated_at',
+    };
+    const orderColumn = sortableColumns[sortField] || 'updated_at';
+    const orderDirection = sortOrder.toUpperCase();
+    sql += ` ORDER BY ${orderColumn} ${orderDirection}, id ASC`;
 
     const products = await qAll<Product>(sql, args);
     return NextResponse.json(products);
@@ -42,10 +55,16 @@ export async function POST(req: NextRequest) {
     );
 
     if (current_stock > 0) {
-      await exec(
+      const txResult = await exec(
         `INSERT INTO inventory_transactions (product_id, type, quantity, note, created_by) VALUES (?, 'STOCK_IN', ?, '초기 재고 등록', '관리자')`,
         [result.lastId, current_stock]
       );
+      if (txResult.lastId) {
+        await exec('UPDATE inventory_transactions SET tx_number = ? WHERE id = ?', [
+          formatTransactionNumber(txResult.lastId),
+          txResult.lastId,
+        ]);
+      }
     }
 
     const product = await qOne<Product>('SELECT * FROM products WHERE id = ?', [result.lastId]);

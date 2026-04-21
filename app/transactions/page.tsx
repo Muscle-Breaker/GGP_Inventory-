@@ -1,16 +1,17 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Plus, Search, Trash2, RefreshCw, ChevronDown,
   ArrowDown, ArrowUp, X, Package, CheckSquare, Square,
-  ArrowUpDown, ChevronsUpDown,
+  ChevronsUpDown,
 } from 'lucide-react';
 import type { InventoryTransaction, SalesChannel } from '@/lib/types';
 import { TRANSACTION_LABELS, TRANSACTION_COLORS, type TransactionType } from '@/lib/types';
 import ImportExportPanel from '@/components/ImportExportPanel';
 
 interface Product { id: number; name: string; sku: string; current_stock: number; }
+const PAGE_SIZE = 100;
 
 const TX_TYPES: { value: TransactionType; label: string; color: string }[] = [
   { value: 'STOCK_IN',  label: '입고',    color: 'bg-green-50 border-green-200 text-green-700' },
@@ -53,36 +54,61 @@ export default function TransactionsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const [form, setForm] = useState({
+    tx_number: '',
     product_id: '', type: 'STOCK_IN' as TransactionType,
     quantity: '', sales_channel: '', note: '',
     transaction_date: new Date().toISOString().split('T')[0],
     created_by: '관리자',
   });
 
-  const fetchTransactions = useCallback(async () => {
-    setLoading(true);
-    const params = new URLSearchParams();
-    if (search)    params.set('search', search);
-    if (typeFilter) params.set('type', typeFilter);
-    if (dateFrom)  params.set('dateFrom', dateFrom);
-    if (dateTo)    params.set('dateTo', dateTo);
-    params.set('sort', sortOrder);
-    params.set('limit', '200');
-    const res = await fetch(`/api/inventory?${params}`);
-    const data = await res.json();
-    setTransactions(data.transactions || []);
-    setTotal(data.total || 0);
-    setLoading(false);
-    setSelectedIds(new Set());
-  }, [search, typeFilter, dateFrom, dateTo, sortOrder]);
-
   useEffect(() => {
-    fetchTransactions();
-    fetch('/api/products').then(r => r.json()).then(setProducts);
-    fetch('/api/channels').then(r => r.json()).then(setChannels);
-  }, [fetchTransactions]);
+    let cancelled = false;
+
+    const loadData = async () => {
+      setLoading(true);
+      const params = new URLSearchParams();
+      if (search) params.set('search', search);
+      if (typeFilter) params.set('type', typeFilter);
+      if (dateFrom) params.set('dateFrom', dateFrom);
+      if (dateTo) params.set('dateTo', dateTo);
+      params.set('sort', sortOrder);
+      params.set('limit', String(PAGE_SIZE));
+      params.set('offset', String((currentPage - 1) * PAGE_SIZE));
+
+      const [txRes, productsRes, channelsRes] = await Promise.all([
+        fetch(`/api/inventory?${params}`),
+        fetch('/api/products'),
+        fetch('/api/channels'),
+      ]);
+      const [txData, productsData, channelsData] = await Promise.all([
+        txRes.json(),
+        productsRes.json(),
+        channelsRes.json(),
+      ]);
+      if (cancelled) return;
+
+      setTransactions(txData.transactions || []);
+      setTotal(txData.total || 0);
+      setProducts(productsData);
+      setChannels(channelsData);
+      setSelectedIds(new Set());
+      setLoading(false);
+    };
+
+    void loadData();
+    return () => {
+      cancelled = true;
+    };
+  }, [search, typeFilter, dateFrom, dateTo, sortOrder, currentPage, reloadKey]);
+
+  const fetchTransactions = () => {
+    setReloadKey(prev => prev + 1);
+  };
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const selectedProduct = products.find(p => String(p.id) === form.product_id);
 
@@ -98,7 +124,7 @@ export default function TransactionsPage() {
       const data = await res.json();
       if (!res.ok) { setError(data.error || '저장 실패'); return; }
       setShowModal(false);
-      setForm(f => ({ ...f, product_id: '', quantity: '', note: '', sales_channel: '' }));
+      setForm(f => ({ ...f, tx_number: '', product_id: '', quantity: '', note: '', sales_channel: '' }));
       fetchTransactions();
       fetch('/api/products').then(r => r.json()).then(setProducts);
     } finally { setSaving(false); }
@@ -107,7 +133,8 @@ export default function TransactionsPage() {
   const handleDelete = async (id: number) => {
     await fetch(`/api/inventory/${id}`, { method: 'DELETE' });
     setDeleteId(null);
-    fetchTransactions();
+    if (transactions.length === 1 && currentPage > 1) setCurrentPage(prev => prev - 1);
+    else fetchTransactions();
     fetch('/api/products').then(r => r.json()).then(setProducts);
   };
 
@@ -120,14 +147,15 @@ export default function TransactionsPage() {
     });
     setBulkDeleting(false);
     setShowBulkConfirm(false);
-    fetchTransactions();
+    if (selectedIds.size === transactions.length && currentPage > 1) setCurrentPage(prev => prev - 1);
+    else fetchTransactions();
     fetch('/api/products').then(r => r.json()).then(setProducts);
   };
 
   const openModal = (type?: TransactionType) => {
     setForm(f => ({
       ...f, type: type || 'STOCK_IN',
-      product_id: '', quantity: '', note: '', sales_channel: '',
+      tx_number: '', product_id: '', quantity: '', note: '', sales_channel: '',
       transaction_date: new Date().toISOString().split('T')[0],
     }));
     setError('');
@@ -137,7 +165,8 @@ export default function TransactionsPage() {
   const toggleSelect = (id: number) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
@@ -153,6 +182,13 @@ export default function TransactionsPage() {
   const allSelected = transactions.length > 0 && selectedIds.size === transactions.length;
 
   const clearDates = () => { setDateFrom(''); setDateTo(''); };
+  const moveToPage = (page: number) => {
+    setCurrentPage(Math.min(totalPages, Math.max(1, page)));
+  };
+  const resetAndSet = (setter: (value: string) => void, value: string) => {
+    setCurrentPage(1);
+    setter(value);
+  };
 
   return (
     <div className="p-6 space-y-5 max-w-[1400px] mx-auto">
@@ -203,11 +239,11 @@ export default function TransactionsPage() {
         <div className="flex flex-wrap gap-3">
           <div className="relative flex-1 min-w-[200px]">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="상품명, SKU 검색..." className="form-input pl-9" />
+            <input type="text" value={search} onChange={e => resetAndSet(setSearch, e.target.value)}
+              placeholder="입출고번호, 상품명, SKU 검색..." className="form-input pl-9" />
           </div>
           <div className="relative">
-            <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)}
+            <select value={typeFilter} onChange={e => resetAndSet(setTypeFilter, e.target.value)}
               className="form-input pr-8 appearance-none cursor-pointer">
               <option value="">전체 유형</option>
               {TX_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
@@ -218,13 +254,13 @@ export default function TransactionsPage() {
         {/* Row 2: date range */}
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-gray-500 font-medium whitespace-nowrap">날짜 범위</span>
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+          <input type="date" value={dateFrom} onChange={e => resetAndSet(setDateFrom, e.target.value)}
             className="form-input text-sm w-auto" />
           <span className="text-gray-400 text-sm">~</span>
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+          <input type="date" value={dateTo} onChange={e => resetAndSet(setDateTo, e.target.value)}
             className="form-input text-sm w-auto" />
           {(dateFrom || dateTo) && (
-            <button onClick={clearDates}
+            <button onClick={() => { clearDates(); setCurrentPage(1); }}
               className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded-lg hover:bg-gray-100 transition-colors">
               <X size={12} /> 초기화
             </button>
@@ -238,6 +274,7 @@ export default function TransactionsPage() {
           <table className="data-table">
             <thead>
               <tr>
+                <th className="min-w-[120px]">입출고번호</th>
                 <th className="w-10">
                   <button onClick={toggleAll} className="flex items-center justify-center w-full">
                     {allSelected
@@ -271,17 +308,20 @@ export default function TransactionsPage() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={9} className="text-center py-12">
+                <tr><td colSpan={10} className="text-center py-12">
                   <RefreshCw size={18} className="animate-spin mx-auto text-gray-300" />
                 </td></tr>
               ) : transactions.length === 0 ? (
-                <tr><td colSpan={9} className="text-center py-16">
+                <tr><td colSpan={10} className="text-center py-16">
                   <Package size={32} className="text-gray-200 mx-auto mb-3" />
                   <p className="text-sm text-gray-400">내역이 없습니다</p>
                 </td></tr>
               ) : (
                 transactions.map(tx => (
                   <tr key={tx.id} className={selectedIds.has(tx.id) ? 'bg-blue-50' : ''}>
+                    <td className="min-w-[120px] text-gray-700 text-xs font-semibold whitespace-nowrap">
+                      {tx.tx_number || `TX-${String(tx.id).padStart(6, '0')}`}
+                    </td>
                     <td>
                       <button onClick={() => toggleSelect(tx.id)} className="flex items-center justify-center w-full">
                         {selectedIds.has(tx.id)
@@ -324,6 +364,33 @@ export default function TransactionsPage() {
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-gray-500">
+        <p>
+          {total === 0
+            ? '표시할 내역이 없습니다'
+            : `${(currentPage - 1) * PAGE_SIZE + 1}-${Math.min(currentPage * PAGE_SIZE, total)} / 총 ${total}건`}
+        </p>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => moveToPage(currentPage - 1)}
+            disabled={currentPage === 1}
+            className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            이전
+          </button>
+          <span className="min-w-[72px] text-center font-medium text-gray-700">
+            {currentPage} / {totalPages}
+          </span>
+          <button
+            onClick={() => moveToPage(currentPage + 1)}
+            disabled={currentPage === totalPages}
+            className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            다음
+          </button>
+        </div>
+      </div>
+
       {/* Transaction Modal */}
       {showModal && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
@@ -336,6 +403,12 @@ export default function TransactionsPage() {
             </div>
             <div className="p-6 space-y-4">
               {error && <div className="bg-red-50 text-red-600 text-sm px-4 py-2.5 rounded-lg border border-red-100">{error}</div>}
+
+              <div>
+                <label className="form-label">입출고번호 <span className="text-gray-400 font-normal">(자동생성)</span></label>
+                <input type="text" value={form.tx_number} onChange={e => setForm(f => ({ ...f, tx_number: e.target.value }))}
+                  className="form-input" placeholder="비워두면 자동 생성됩니다 (예: TX-000001)" />
+              </div>
 
               <div>
                 <label className="form-label">유형 *</label>

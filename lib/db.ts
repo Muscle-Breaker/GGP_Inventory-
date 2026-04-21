@@ -43,6 +43,7 @@ const SCHEMA = [
   )`,
   `CREATE TABLE IF NOT EXISTS inventory_transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tx_number TEXT,
     product_id INTEGER NOT NULL,
     type TEXT NOT NULL,
     quantity INTEGER NOT NULL,
@@ -87,10 +88,17 @@ export async function getDb(): Promise<Client> {
   // Migrations: add columns that may not exist in older DBs
   const migrations = [
     `ALTER TABLE products ADD COLUMN english_name TEXT DEFAULT ''`,
+    `ALTER TABLE inventory_transactions ADD COLUMN tx_number TEXT`,
   ];
   for (const m of migrations) {
     try { await c.execute(m); } catch { /* column already exists */ }
   }
+
+  await c.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_transactions_tx_number
+                   ON inventory_transactions(tx_number)`);
+  await c.execute(`UPDATE inventory_transactions
+                   SET tx_number = 'TX-' || printf('%06d', id)
+                   WHERE tx_number IS NULL OR tx_number = ''`);
 
   const { rows: cr } = await c.execute('SELECT COUNT(*) as n FROM sales_channels');
   if (Number(cr[0][0]) === 0) {

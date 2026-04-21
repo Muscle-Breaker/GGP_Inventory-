@@ -1,10 +1,13 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { Search, RefreshCw, ChevronDown, ArrowLeftRight, AlertTriangle, Package, Image as ImageIcon, Calendar, X } from 'lucide-react';
 import Link from 'next/link';
 import type { Product } from '@/lib/types';
 import ImportExportPanel from '@/components/ImportExportPanel';
+
+type SortField = 'name' | 'color' | 'size' | 'stock';
+type SortOrder = 'asc' | 'desc';
 
 export default function InventoryPage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -15,24 +18,56 @@ export default function InventoryPage() {
   const [categories, setCategories] = useState<string[]>([]);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [sortField, setSortField] = useState<SortField>('name');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
+  const [reloadKey, setReloadKey] = useState(0);
 
-  const fetchProducts = useCallback(async () => {
-    setLoading(true);
-    const params = new URLSearchParams();
-    if (search) params.set('search', search);
-    if (category) params.set('category', category);
-    if (stockFilter === 'out') params.set('outOfStock', 'true');
-    if (dateFrom) params.set('dateFrom', dateFrom);
-    if (dateTo)   params.set('dateTo', dateTo);
-    const res = await fetch(`/api/products?${params}`);
-    const data: Product[] = await res.json();
-    setProducts(data);
-    const cats = [...new Set(data.map(p => p.category).filter(Boolean))] as string[];
-    setCategories(cats);
-    setLoading(false);
-  }, [search, category, stockFilter, dateFrom, dateTo]);
+  useEffect(() => {
+    let cancelled = false;
 
-  useEffect(() => { fetchProducts(); }, [fetchProducts]);
+    const loadProducts = async () => {
+      setLoading(true);
+      const params = new URLSearchParams();
+      if (search) params.set('search', search);
+      if (category) params.set('category', category);
+      if (stockFilter === 'out') params.set('outOfStock', 'true');
+      if (dateFrom) params.set('dateFrom', dateFrom);
+      if (dateTo)   params.set('dateTo', dateTo);
+      params.set('sortField', sortField);
+      params.set('sortOrder', sortOrder);
+
+      const res = await fetch(`/api/products?${params}`);
+      const data: Product[] = await res.json();
+      if (cancelled) return;
+
+      setProducts(data);
+      const cats = [...new Set(data.map(p => p.category).filter(Boolean))] as string[];
+      setCategories(cats);
+      setLoading(false);
+    };
+
+    void loadProducts();
+    return () => {
+      cancelled = true;
+    };
+  }, [search, category, stockFilter, dateFrom, dateTo, sortField, sortOrder, reloadKey]);
+
+  const fetchProducts = () => {
+    setReloadKey(prev => prev + 1);
+  };
+
+  const toggleSort = (field: SortField) => {
+    setSortOrder(prev => {
+      if (field !== sortField) return 'asc';
+      return prev === 'asc' ? 'desc' : 'asc';
+    });
+    setSortField(field);
+  };
+
+  const sortLabel = (field: SortField) => {
+    if (sortField !== field) return '↕';
+    return sortOrder === 'asc' ? '↑' : '↓';
+  };
 
   const filtered = stockFilter === 'low'
     ? products.filter(p => p.current_stock > 0 && p.current_stock <= 5)
@@ -130,13 +165,29 @@ export default function InventoryPage() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>상품</th>
+                <th>
+                  <button type="button" onClick={() => toggleSort('name')} className="flex items-center gap-1 font-semibold">
+                    상품명 <span className="text-xs text-gray-400">{sortLabel('name')}</span>
+                  </button>
+                </th>
                 <th>SKU</th>
                 <th>카테고리</th>
-                <th>색상</th>
-                <th>사이즈</th>
+                <th>
+                  <button type="button" onClick={() => toggleSort('color')} className="flex items-center gap-1 font-semibold">
+                    색상 <span className="text-xs text-gray-400">{sortLabel('color')}</span>
+                  </button>
+                </th>
+                <th>
+                  <button type="button" onClick={() => toggleSort('size')} className="flex items-center gap-1 font-semibold">
+                    사이즈 <span className="text-xs text-gray-400">{sortLabel('size')}</span>
+                  </button>
+                </th>
                 <th>판매가</th>
-                <th>재고 상태</th>
+                <th>
+                  <button type="button" onClick={() => toggleSort('stock')} className="flex items-center gap-1 font-semibold">
+                    수량 <span className="text-xs text-gray-400">{sortLabel('stock')}</span>
+                  </button>
+                </th>
                 <th>입출고</th>
               </tr>
             </thead>

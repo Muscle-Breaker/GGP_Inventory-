@@ -28,6 +28,7 @@ export interface GoogleSheetConnection {
 
 export interface InventoryTransaction {
   id: number;
+  tx_number: string;
   product_id: number;
   product_name?: string;
   product_sku?: string;
